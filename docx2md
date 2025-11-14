@@ -1,0 +1,252 @@
+#!/bin/bash
+
+# docx2md - Convert DOCX to Markdown using pandoc
+# Copyright (c) 2025
+# 
+# A comprehensive tool for converting Microsoft Word (DOCX) files to Markdown format
+# using pandoc with flexible input/output options.
+
+set -euo pipefail
+
+# Script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Default values
+INPUT_FILE=""
+OUTPUT_FILE=""
+VERBOSE=false
+PANDOC_ARGS=""
+
+# Color codes for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Function to print colored output
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $1" >&2
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1" >&2
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1" >&2
+}
+
+log_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1" >&2
+}
+
+# Function to show usage information
+show_help() {
+    cat << EOF
+docx2md - Convert DOCX to Markdown using pandoc
+
+USAGE:
+    docx2md [OPTIONS] [INPUT_FILE]
+
+DESCRIPTION:
+    Converts Microsoft Word (DOCX) files to Markdown format using pandoc.
+    Input can be provided via stdin or as a file argument.
+    Output can be written to stdout or to a specified file.
+
+OPTIONS:
+    -o, --output FILE       Output file path (default: stdout)
+    -v, --verbose          Enable verbose output
+    -h, --help             Show this help message
+    --pandoc-args ARGS     Additional arguments to pass to pandoc
+
+EXAMPLES:
+    # Convert from stdin to stdout
+    cat document.docx | docx2md
+
+    # Convert file to stdout
+    docx2md input.docx
+
+    # Convert file to specific output
+    docx2md input.docx -o output.md
+
+    # Verbose mode with additional pandoc options
+    docx2md input.docx -o output.md -v --pandoc-args "--wrap=none --extract-media=./media"
+
+OUTPUT FORMATS:
+    The tool outputs GitHub Flavored Markdown (GFM), supporting:
+    - Headers, paragraphs, and text formatting
+    - Lists (ordered and unordered)
+    - Code blocks and inline code
+    - Tables
+    - Links and images
+    - Blockquotes
+    - Strikethrough text
+
+DEPENDENCIES:
+    - pandoc (required for conversion)
+
+EXIT CODES:
+    0   Success
+    1   General error
+    2   Missing dependencies
+    3   Invalid arguments
+    4   File not found
+
+AUTHOR:
+    Created for efficient DOCX to Markdown conversion workflows.
+
+EOF
+}
+
+# Function to check if required tools are available
+check_dependencies() {
+    if ! command -v pandoc >/dev/null 2>&1; then
+        log_error "pandoc is not installed or not in PATH"
+        log_error "Please install pandoc: https://pandoc.org/installing.html"
+        return 2
+    fi
+
+    return 0
+}
+
+# Function to parse command line arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -o|--output)
+                if [[ -z "${2:-}" ]]; then
+                    log_error "Option $1 requires an argument"
+                    exit 3
+                fi
+                OUTPUT_FILE="$2"
+                shift 2
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
+            --pandoc-args)
+                if [[ -z "${2:-}" ]]; then
+                    log_error "Option $1 requires an argument"
+                    exit 3
+                fi
+                PANDOC_ARGS="$2"
+                shift 2
+                ;;
+            -*)
+                log_error "Unknown option: $1"
+                log_error "Use -h or --help for usage information"
+                exit 3
+                ;;
+            *)
+                if [[ -n "$INPUT_FILE" ]]; then
+                    log_error "Multiple input files specified: '$INPUT_FILE' and '$1'"
+                    exit 3
+                fi
+                INPUT_FILE="$1"
+                shift
+                ;;
+        esac
+    done
+}
+
+# Function to validate input file
+validate_input() {
+    if [[ -n "$INPUT_FILE" ]]; then
+        if [[ ! -f "$INPUT_FILE" ]]; then
+            log_error "Input file not found: $INPUT_FILE"
+            exit 4
+        fi
+        if [[ ! -r "$INPUT_FILE" ]]; then
+            log_error "Cannot read input file: $INPUT_FILE"
+            exit 4
+        fi
+        # Check if file has .docx extension
+        if [[ ! "$INPUT_FILE" =~ \.(docx|DOCX)$ ]]; then
+            log_warn "Input file does not have .docx extension: $INPUT_FILE"
+            log_warn "Proceeding anyway, but conversion may fail if not a valid DOCX file"
+        fi
+    fi
+}
+
+# Function to build pandoc command
+build_pandoc_command() {
+    local cmd="pandoc"
+    
+    # Input format
+    cmd="$cmd --from=docx"
+    
+    # Output format - using gfm for GitHub Flavored Markdown
+    cmd="$cmd --to=gfm"
+    
+    # Additional pandoc arguments
+    if [[ -n "$PANDOC_ARGS" ]]; then
+        cmd="$cmd $PANDOC_ARGS"
+    fi
+    
+    # Input source
+    if [[ -n "$INPUT_FILE" ]]; then
+        cmd="$cmd \"$INPUT_FILE\""
+    else
+        cmd="$cmd -"  # Read from stdin
+    fi
+    
+    # Output destination
+    if [[ -n "$OUTPUT_FILE" ]]; then
+        cmd="$cmd --output=\"$OUTPUT_FILE\""
+    else
+        cmd="$cmd --output=-"  # Write to stdout
+    fi
+    
+    echo "$cmd"
+}
+
+# Function to perform the conversion
+convert_docx() {
+    local pandoc_cmd
+    pandoc_cmd=$(build_pandoc_command)
+    
+    if [[ "$VERBOSE" == true ]]; then
+        log_info "Input: ${INPUT_FILE:-stdin}"
+        log_info "Output: ${OUTPUT_FILE:-stdout}"
+        log_info "Pandoc command: $pandoc_cmd"
+    fi
+    
+    # Execute pandoc command
+    if eval "$pandoc_cmd"; then
+        if [[ "$VERBOSE" == true && -n "$OUTPUT_FILE" ]]; then
+            log_success "Conversion completed: $OUTPUT_FILE"
+        fi
+        return 0
+    else
+        log_error "Conversion failed"
+        return 1
+    fi
+}
+
+# Main function
+main() {
+    # Parse command line arguments
+    parse_args "$@"
+    
+    # Check dependencies
+    if ! check_dependencies; then
+        exit $?
+    fi
+    
+    # Validate input
+    validate_input
+    
+    # Perform conversion
+    if ! convert_docx; then
+        exit 1
+    fi
+}
+
+# Run main function with all arguments
+main "$@"
